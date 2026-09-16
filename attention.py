@@ -8,23 +8,25 @@ class Attention(nn.Module):
         super().__init__()
         self.scale = 1.0/math.sqrt(head_dim)
 
-    def attention(self, query, key, values, mask):
+    def forward(self, query, key, values, mask):
 
         scores = torch.matmul(query, key.transpose(-2,-1))
         scores = scores * self.scale
-        scores = scores.masked_fill_(mask, float("-inf"))
-        attention = torch.softmax(scores, dim=1)
-        scores = torch.matmul(scores, values)
+        if mask is not None:
+            scores = scores.masked_fill_(mask, float("-inf"))
+        attention = torch.softmax(scores, dim=-1)
+        scores = torch.matmul(attention, values)
         return scores, attention
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, input_dim, d_model, num_heads):
         super().__init__()
-        self.input_dim = input_dim
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads")
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model//num_heads
-
+        self.scaled_dot_product = Attention(self.head_dim)
         # Compute Q, K and V at once for all heads
         self.qkv_layer = nn.Linear(input_dim, 3 * d_model)
         # Final Projection
@@ -38,12 +40,11 @@ class MultiHeadAttention(nn.Module):
         qkv = self.qkv_layer(x)
         qkv = qkv.reshape(batch_size, sequence_length, self.num_heads, 3*self.head_dim)
         # Rearrange to (batch size, num_heads, seq_length, 3*head_dim)
-        qkv = qkv.math.permute(0,2,1,3)
+        qkv = qkv.permute(0,2,1,3)
 
         # Split the last dimension into q, k, v
         q, k, v = qkv.chunk(3, dim=-1)
-        scaled_dot_product = Attention(self.head_dim)
-        values, attention = scaled_dot_product(q, k, v, mask)
+        values, attention = self.scaled_dot_product(q, k, v, mask)
         values = values.permute(0,2,1,3)
         values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
 
