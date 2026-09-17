@@ -19,7 +19,7 @@ class Attention(nn.Module):
         return scores, attention
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, input_dim, d_model, num_heads):
+    def __init__(self, query_dim, key_dim, value_dim, d_model, num_heads):
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
@@ -28,26 +28,46 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_model//num_heads
         self.scaled_dot_product = Attention(self.head_dim)
         # Compute Q, K and V at once for all heads
-        self.qkv_layer = nn.Linear(input_dim, 3 * d_model)
+        self.query_layer = nn.Linear(query_dim, d_model)
+        self.key_layer = nn.Linear(key_dim, d_model)
+        self.value_layer = nn.Linear(value_dim, d_model)
         # Final Projection
         self.linear_layer = nn.Linear(d_model, d_model)
 
-    def forward(self, x, mask=None):
+    def forward(self, query, key=None, value=None, mask=None):
 
-        batch_size, sequence_length, input_dim = x.size()
+        if key is None:
+            key = query
+        if value is None:
+            value = key
 
         # Project x onto q, k, v
-        qkv = self.qkv_layer(x)
-        qkv = qkv.reshape(batch_size, sequence_length, self.num_heads, 3*self.head_dim)
-        # Rearrange to (batch size, num_heads, seq_length, 3*head_dim)
-        qkv = qkv.permute(0,2,1,3)
+        batch_size, query_length, _ = query.shape
+        key_length = key.shape[1]
+        value_length = value.shape[1]
+        if key_length != value_length:
+            raise ValueError("Key and Value must have the same sequence length")
+        
+        q = self.query_layer(query)
+        k = self.key_layer(key)
+        v = self.value_layer(value)
 
-        # Split the last dimension into q, k, v
-        q, k, v = qkv.chunk(3, dim=-1)
+        q = q.reshape(
+            batch_size, query_length, self.num_heads, self.head_dim
+        ).permute(0, 2, 1, 3)
+
+        k = k.reshape(
+            batch_size, key_length, self.num_heads, self.head_dim
+        ).permute(0, 2, 1, 3)
+
+        v = v.reshape(
+            batch_size, value_length, self.num_heads, self.head_dim
+        ).permute(0, 2, 1, 3)
+
         values, attention = self.scaled_dot_product(q, k, v, mask)
         values = values.permute(0,2,1,3)
-        values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
+        values = values.reshape(batch_size, query_length, self.d_model)
 
         output = self.linear_layer(values)
-        return output
+        return output, attention
 
