@@ -34,8 +34,12 @@ class MultiHeadAttention(nn.Module):
         # Final Projection
         self.linear_layer = nn.Linear(d_model, d_model)
 
-    def forward(self, query, key=None, value=None, mask=None):
+        self.kv_cache = KV_Cache()
 
+    def forward(self, query, key=None, value=None, mask=None, use_cache=True, clear_cache=False):
+
+        if clear_cache:
+            self.kv_cache.clear_cache()
         if key is None:
             key = query
         if value is None:
@@ -64,6 +68,11 @@ class MultiHeadAttention(nn.Module):
             batch_size, value_length, self.num_heads, self.head_dim
         ).permute(0, 2, 1, 3)
 
+        if use_cache:
+            self.kv_cache.update(k,v)
+            k = self.kv_cache.key
+            v = self.kv_cache.value
+            
         values, attention = self.scaled_dot_product(q, k, v, mask)
         values = values.permute(0,2,1,3)
         values = values.reshape(batch_size, query_length, self.d_model)
@@ -71,3 +80,20 @@ class MultiHeadAttention(nn.Module):
         output = self.linear_layer(values)
         return output, attention
 
+class KV_Cache(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.key = None
+        self.value = None
+    def update(self, key, value):
+
+        if self.key is None:
+            self.key = key
+            self.value = value
+        else:
+            self.key = torch.cat((self.key, key), dim=2)
+            self.value = torch.cat((self.value, value), dim=2)
+
+    def clear_cache(self):
+        self.key = None
+        self.value = None

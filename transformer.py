@@ -88,11 +88,11 @@ class DecoderBlock(nn.Module):
         self.layernorm2 = nn.LayerNorm(d_model)
         self.layernorm3 = nn.LayerNorm(d_model)
 
-    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None):
+    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=True):
 
-        self_output, self_weights = self.self_attention(x, mask=look_ahead_mask)
+        self_output, self_weights = self.self_attention(x, mask=look_ahead_mask, use_cache=use_cache)
         x = self.layernorm1(x+self.dropout1(self_output))
-        cross_output, cross_weights = self.cross_attention(query=x,key=encoder_output,value=encoder_output,mask=padding_mask)
+        cross_output, cross_weights = self.cross_attention(query=x,key=encoder_output,value=encoder_output,mask=padding_mask, use_cache=use_cache)
         x = self.layernorm2(x+self.dropout2(cross_output))
 
         ffn_output = self.ffn(x)
@@ -114,7 +114,7 @@ class Decoder(nn.Module):
         self.dec_layers = nn.ModuleList([DecoderBlock(d_model, dff, num_heads, p_rate) for _ in range(num_layers)])
         self.register_buffer("pos_encoding", positional_encoding(d_model, max_position_encod))
 
-    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None):
+    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=True):
 
         seq_len = x.shape[1]
         attention_weights = {}
@@ -125,7 +125,7 @@ class Decoder(nn.Module):
         x += self.pos_encoding[:seq_len]
         x = self.dropout(x)
         for index, layer in enumerate(self.dec_layers):
-            x, self_weights, cross_weights = layer(x, encoder_output, look_ahead_mask, padding_mask)
+            x, self_weights, cross_weights = layer(x, encoder_output, look_ahead_mask, padding_mask, use_cache)
             attention_weights[f"layer{index+1}_self"]=self_weights
             attention_weights[f"layer{index+1}_cross"]=cross_weights
         return x, attention_weights
@@ -145,10 +145,10 @@ class Transformer(nn.Module):
         self.decoder = Decoder(num_layers, d_model, dff, num_heads, vocab_size, max_position_encod, p_rate)
         self.linear = nn.Linear(d_model, vocab_size)
 
-    def forward(self, source, target, mask=None, look_ahead_mask=None, padding_mask=None):
+    def forward(self, source, target, mask=None, look_ahead_mask=None, padding_mask=None, use_cache=True):
 
         encoder_output = self.encoder(source, mask=mask)
-        decoder_output, attention_weights = self.decoder(target, encoder_output, look_ahead_mask, padding_mask)
+        decoder_output, attention_weights = self.decoder(target, encoder_output, look_ahead_mask, padding_mask, use_cache)
         output = self.linear(decoder_output)
         output = torch.softmax(output, dim=-1)
         return output
