@@ -36,7 +36,7 @@ class MultiHeadAttention(nn.Module):
 
         self.kv_cache = KV_Cache()
 
-    def forward(self, query, key=None, value=None, mask=None, use_cache=True, clear_cache=False):
+    def forward(self, query, key=None, value=None, mask=None, use_cache=False, clear_cache=False):
 
         if clear_cache:
             self.kv_cache.clear_cache()

@@ -145,10 +145,9 @@ class Transformer(nn.Module):
         self.decoder = Decoder(num_layers, d_model, dff, num_heads, vocab_size, max_position_encod, p_rate)
         self.linear = nn.Linear(d_model, vocab_size)
 
-    def forward(self, source, target, mask=None, look_ahead_mask=None, padding_mask=None, use_cache=True):
+    def forward(self, source, target, mask=None, look_ahead_mask=None, padding_mask=None, use_cache=False):
 
         encoder_output = self.encoder(source, mask=mask)
         decoder_output, attention_weights = self.decoder(target, encoder_output, look_ahead_mask, padding_mask, use_cache)
         output = self.linear(decoder_output)
-        output = torch.softmax(output, dim=-1)
         return output
