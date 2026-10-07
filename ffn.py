@@ -1,8 +1,8 @@
-import torch 
-from torch import nn
+import torch
+from torch import Tensor, nn
 
 class FeedForward(nn.Module):
-    def __init__(self, d_model, dff):
+    def __init__(self, d_model: int, dff: int) -> None:
         super().__init__()
 
         self.d_model = d_model
@@ -10,6 +10,6 @@ class FeedForward(nn.Module):
         self.linear_layer1 = nn.Linear(d_model, dff)
         self.linear_layer2 = nn.Linear(dff, d_model)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
 
         return self.linear_layer2(torch.relu(self.linear_layer1(x)))

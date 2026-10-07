@@ -1,8 +1,8 @@
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 class LoRA_Layer(nn.Module):
-    def __init__(self, input_dim, output_dim, rank, alpha):
+    def __init__(self, input_dim: int, output_dim: int, rank: int, alpha: float) -> None:
         super().__init__()
 
         std_dev = 1/torch.sqrt(torch.tensor(rank).float())
@@ -10,12 +10,12 @@ class LoRA_Layer(nn.Module):
         self.B = nn.Parameter(torch.zeros(rank, output_dim))
         self.alpha = alpha
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
 
         return self.alpha * (x @ self.A @ self.B)
 
 class LinearWithLoRA(nn.Module):
-    def __init__(self, linear, rank, alpha):
+    def __init__(self, linear: nn.Linear, rank: int, alpha: float) -> None:
         super().__init__()
 
         self.linear = linear
@@ -24,6 +24,6 @@ class LinearWithLoRA(nn.Module):
         for param in self.linear.parameters():
             param.requires_grad = False
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
 
         return self.linear(x) + self.lora(x)

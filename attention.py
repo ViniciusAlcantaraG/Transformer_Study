@@ -1,14 +1,16 @@
-import torch
-from torch import nn
 import math
+
+import torch
+from torch import Tensor, nn
 
 class Attention(nn.Module):
 
-    def __init__(self, head_dim):
+    def __init__(self, head_dim: int) -> None:
         super().__init__()
         self.scale = 1.0/math.sqrt(head_dim)
 
-    def forward(self, query, key, values, mask):
+    def forward(self, query: Tensor, key: Tensor, values: Tensor,
+                mask: Tensor | None) -> tuple[Tensor, Tensor]:
 
         scores = torch.matmul(query, key.transpose(-2,-1))
         scores = scores * self.scale
@@ -19,7 +21,8 @@ class Attention(nn.Module):
         return scores, attention
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, query_dim, key_dim, value_dim, d_model, num_heads):
+    def __init__(self, query_dim: int, key_dim: int, value_dim: int,
+                 d_model: int, num_heads: int) -> None:
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
@@ -36,7 +39,9 @@ class MultiHeadAttention(nn.Module):
 
         self.kv_cache = KV_Cache()
 
-    def forward(self, query, key=None, value=None, mask=None, use_cache=False, clear_cache=False):
+    def forward(self, query: Tensor, key: Tensor | None = None,
+                value: Tensor | None = None, mask: Tensor | None = None,
+                use_cache: bool = False, clear_cache: bool = False) -> tuple[Tensor, Tensor]:
 
         if clear_cache:
             self.kv_cache.clear_cache()
@@ -81,11 +86,12 @@ class MultiHeadAttention(nn.Module):
         return output, attention
 
 class KV_Cache(nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.key = None
-        self.value = None
-    def update(self, key, value):
+        self.key: Tensor | None = None
+        self.value: Tensor | None = None
+
+    def update(self, key: Tensor, value: Tensor) -> None:
 
         if self.key is None:
             self.key = key
@@ -94,6 +100,6 @@ class KV_Cache(nn.Module):
             self.key = torch.cat((self.key, key), dim=2)
             self.value = torch.cat((self.value, value), dim=2)
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         self.key = None
         self.value = None
