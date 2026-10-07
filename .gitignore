@@ -3,7 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-checkpoints/
-*.pt
+checkpoints/*
+!checkpoints/best.pt
 *.pth
 .DS_Store
