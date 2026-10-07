@@ -12,7 +12,7 @@ class LoRA_Layer(nn.Module):
 
     def forward(self, x):
 
-        x = self.alpha * (x @ self.A @ self.B)
+        return self.alpha * (x @ self.A @ self.B)
 
 class LinearWithLoRA(nn.Module):
     def __init__(self, linear, rank, alpha):
@@ -20,7 +20,10 @@ class LinearWithLoRA(nn.Module):
 
         self.linear = linear
         self.lora = LoRA_Layer(linear.in_features, linear.out_features, rank, alpha)
+        # LoRA keeps the base weights frozen and trains only the low-rank adapters
+        for param in self.linear.parameters():
+            param.requires_grad = False
 
-        def forward(self, x):
+    def forward(self, x):
 
-            return self.linear(x) + self.lora(x)
+        return self.linear(x) + self.lora(x)

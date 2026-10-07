@@ -13,7 +13,7 @@ class Attention(nn.Module):
         scores = torch.matmul(query, key.transpose(-2,-1))
         scores = scores * self.scale
         if mask is not None:
-            scores = scores.masked_fill_(mask, float("-inf"))
+            scores = scores.masked_fill(mask, float("-inf"))
         attention = torch.softmax(scores, dim=-1)
         scores = torch.matmul(attention, values)
         return scores, attention
