@@ -6,7 +6,10 @@ import math
 
 
 def positional_encoding(d_model, max_position):
-
+    """Word embeddings don't account for position, so we use sinusoidal waves
+    to encode it. Lower dimensions change values quickly with frequence while
+    higer dimensions are more stable. This guarantees unique representation for
+    each position"""
     positions = torch.arange(max_position, dtype=torch.float32).unsqueeze(1)
     div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000)/d_model))
 
@@ -88,11 +91,13 @@ class DecoderBlock(nn.Module):
         self.layernorm2 = nn.LayerNorm(d_model)
         self.layernorm3 = nn.LayerNorm(d_model)
 
-    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=True):
+    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=False):
 
         self_output, self_weights = self.self_attention(x, mask=look_ahead_mask, use_cache=use_cache)
         x = self.layernorm1(x+self.dropout1(self_output))
-        cross_output, cross_weights = self.cross_attention(query=x,key=encoder_output,value=encoder_output,mask=padding_mask, use_cache=use_cache)
+        # Cross-attention keys/values come from the encoder output, which is identical
+        # on every decoding step, so they are never cached (caching would duplicate them).
+        cross_output, cross_weights = self.cross_attention(query=x,key=encoder_output,value=encoder_output,mask=padding_mask)
         x = self.layernorm2(x+self.dropout2(cross_output))
 
         ffn_output = self.ffn(x)
@@ -114,7 +119,7 @@ class Decoder(nn.Module):
         self.dec_layers = nn.ModuleList([DecoderBlock(d_model, dff, num_heads, p_rate) for _ in range(num_layers)])
         self.register_buffer("pos_encoding", positional_encoding(d_model, max_position_encod))
 
-    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=True):
+    def forward(self, x, encoder_output, look_ahead_mask=None, padding_mask=None, use_cache=False):
 
         seq_len = x.shape[1]
         attention_weights = {}
@@ -151,3 +156,8 @@ class Transformer(nn.Module):
         decoder_output, attention_weights = self.decoder(target, encoder_output, look_ahead_mask, padding_mask, use_cache)
         output = self.linear(decoder_output)
         return output
+
+    def clear_cache(self):
+        
+        for layer in self.decoder.dec_layers:
+            layer.self_attention.kv_cache.clear_cache()

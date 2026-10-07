@@ -1,5 +1,4 @@
 import torch
-from torch import nn
 
 def top_k_generation(logits, top_k=50, return_logits=False, min_tokens_to_keep=1):
 
