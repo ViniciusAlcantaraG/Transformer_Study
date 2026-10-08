@@ -1,0 +1,8 @@
+{
+  "bleu": 5.6762539445795746,
+  "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0",
+  "n": 1000,
+  "strategy": "greedy",
+  "checkpoint": "checkpoints/best.pt",
+  "epoch": 15
+}

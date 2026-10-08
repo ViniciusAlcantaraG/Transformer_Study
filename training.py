@@ -140,7 +140,12 @@ def plot_history(history: dict[str, list[float]], path: str | Path) -> None:
     plt.close()
 
 
-def main() -> None:
+def load_opus_splits() -> tuple[list[str], list[str], list[int], list[int]]:
+    """Load opus-100 en→pt and return texts plus the seed-42 train/val split.
+
+    Shared by training.main() and evaluate.py so BLEU is scored against the
+    exact validation pairs the checkpoint was selected on.
+    """
     ds = load_dataset("Helsinki-NLP/opus-100", "en-pt", split=f"train[:{TRAIN_PAIRS}]")
     source_texts = [ex["translation"]["en"] for ex in ds]
     target_texts = [ex["translation"]["pt"] for ex in ds]
@@ -150,6 +155,11 @@ def main() -> None:
     # random train/val split
     perm = torch.randperm(len(source_texts)).tolist()
     val_idx, train_idx = perm[:N_VAL], perm[N_VAL:]
+    return source_texts, target_texts, val_idx, train_idx
+
+
+def main() -> None:
+    source_texts, target_texts, val_idx, train_idx = load_opus_splits()
 
     # learn BPE merges on the train split only
     # byte-level encoding means the validation split always encodes anyway

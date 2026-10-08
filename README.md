@@ -11,12 +11,13 @@ The model is an encoder–decoder Transformer trained on an English to Portugues
 | `attention.py` | `Attention` (scaled dot-product with masking), `MultiHeadAttention` (fused Q/K/V projections, split into heads, merged back), `KV_Cache` |
 | `ffn.py` | Position-wise feed-forward network (ReLU MLP) |
 | `transformer.py` | Sinusoidal positional encoding, `TransformerBlock`, `Encoder`, `DecoderBlock`, `Decoder`, full `Transformer` |
-| `training.py` | dataset/collate (pre-encoded once through BPE), mask construction, teacher-forcing shift, train/val loop with early stopping, checkpointing, plotting (entry point) |
+| `training.py` | dataset/collate (pre-encoded once through BPE), mask construction, teacher-forcing shift, train/val loop with early stopping, checkpointing, plotting (entry point), shared seed-42 data split (`load_opus_splits`) |
 | `generate.py` | Incremental generation (greedy / top-k / top-p) with KV cache + cached-vs-uncached benchmark |
+| `evaluate.py` | Corpus BLEU-4 (sacrebleu) over the validation split — greedy-decodes the checkpoint on every val pair and writes `results/metrics.json` |
 | `sampling.py` | Top-k and nucleus (top-p) sampling strategies with temperature |
 | `lora.py` | LoRA low-rank adapter layers (`LoRA_Layer`, `LinearWithLoRA`) |
 | `tokenizer.py` | From-scratch byte-level BPE built on the GPT-2 pre-tokenizer — merge training with incremental pair bookkeeping, `encode`/`decode`, checkpoint-serializable state (used by training and generation) |
-| `tests/` | 63 pytest tests: masking invariants, KV-cache equivalence, sampling, LoRA, BPE tokenizer, training helpers |
+| `tests/` | 70 pytest tests: masking invariants, KV-cache equivalence, sampling, LoRA, BPE tokenizer, training helpers, BLEU evaluation |
 | `results/` | `history.json` (train/val curves) and `loss_curve.png` produced by `training.py` |
 | `checkpoints/` | `best.pt` — best-validation checkpoint (model weights + config + tokenizer state) |
 
@@ -51,7 +52,8 @@ The model is an encoder–decoder Transformer trained on an English to Portugues
 ```bash
 pip install -r requirements.txt
 python training.py        # train + save checkpoints/best.pt and results/
-python -m pytest tests/ -q   # 63 tests
+python evaluate.py        # greedy-decode the val split, score corpus BLEU-4
+python -m pytest tests/ -q   # 70 tests
 python tokenizer.py       # standalone BPE demo (4-sentence corpus)
 ```
 
@@ -64,6 +66,7 @@ python generate.py --source "Good morning"                        # greedy
 python generate.py --source "hello" --strategy topk --top-k 20 --temperature 0.8
 python generate.py --source "hello" --strategy topp --top-p 0.9
 python generate.py --benchmark                                     # KV-cache speed test
+python evaluate.py --limit 50                                      # quick BLEU sanity check
 ```
 
 Prompts are **case-sensitive** (GPT-2-style byte-level BPE has no case folding): `Good morning` is the form that appears at sentence starts in the training corpus, so it translates more reliably than `good morning`.
@@ -80,7 +83,20 @@ Training (seed 42, 19,000 train / 1,000 val pairs, d_model=256, 4 layers, 4 head
 | 15 (best) | 3.67 | 4.47 | 87.0 |
 | 20 | 3.38 | 4.49 | 89.0 |
 
-Early stopping kicked in at epoch 20 (5 without improvement); the checkpoint keeps the epoch-15 weights. Byte-level BPE roughly halved validation perplexity versus the previous word-level tokenizer (87 vs 227) while shrinking the vocabulary from 19,401 to 4,260 tokens.
+Early stopping kicked in at epoch 20 (5 without improvement); the checkpoint keeps the epoch-15 weights. Byte-level BPE also shrank the vocabulary from 19,401 to 4,260 tokens.
+
+**Perplexity is only meaningful within one tokenizer.** The previous word-level run reported validation perplexity 227 vs 87 here, but perplexity is `exp` of the cross-entropy *per predicted token*, so it depends on token granularity and vocabulary size: predicting 4,260 BPE tokens that each cover several characters is a different — and mechanically easier — task than predicting 19,401 word tokens (word-level also maps rare words to `<unk>`, which byte-level BPE cannot). The 87 vs 227 gap therefore mixes a real modeling change with a change of measurement unit and should not be read as "half the error".
+
+**BLEU on decoded text is the tokenizer-independent metric**: it is computed on the detokenized strings with sacrebleu's fixed 13a tokenization, so it depends only on translation quality, never on the model's vocabulary.
+
+**Generation quality** (greedy decoding over all 1,000 validation pairs, epoch-15 checkpoint, `python evaluate.py`):
+
+| Metric | Value |
+|---|---|
+| Corpus BLEU-4 | **5.68** |
+| Signature | `nrefs:1\|case:mixed\|eff:no\|tok:13a\|smooth:exp\|version:2.6.0` |
+
+BLEU 5.68 is low in absolute terms — expected for a 10.6M-parameter model trained on 19k pairs for 20 epochs — but it is a comparable number across future tokenizer or vocabulary changes, unlike perplexity.
 
 ![Training and validation loss](results/loss_curve.png)
 
@@ -109,9 +125,9 @@ Two honest limitations of a 19k-pair toy model: inputs outside the training dist
 
 ## Roadmap
 
-- [x] Unit tests (masking invariants, KV-cache equivalence, shape checks) — 63 tests
+- [x] Unit tests (masking invariants, KV-cache equivalence, shape checks) — 70 tests
 - [x] Generation loop tying together KV cache + top-k/top-p sampling
-- [x] Evaluation (perplexity), checkpoints and loss-curve plots
+- [x] Evaluation (perplexity within a run, corpus BLEU across tokenizers), checkpoints and loss-curve plots
 - [x] Finish the BPE tokenizer study (`tokenizer.py`) — byte-level BPE used in training and generation
 - [ ] CI with linting and tests
 
