@@ -12,13 +12,14 @@ The model is an encoder–decoder Transformer trained on an English to Portugues
 | `ffn.py` | Position-wise feed-forward network (ReLU MLP) |
 | `transformer.py` | Sinusoidal positional encoding, `TransformerBlock`, `Encoder`, `DecoderBlock`, `Decoder`, full `Transformer` |
 | `training.py` | dataset/collate (pre-encoded once through BPE), mask construction, teacher-forcing shift, train/val loop with early stopping, checkpointing, plotting (entry point), shared seed-42 data split (`load_opus_splits`) |
-| `generate.py` | Incremental generation (greedy / top-k / top-p) with KV cache + cached-vs-uncached benchmark |
+| `generate.py` | Incremental generation (greedy / top-k / top-p) with KV cache + cached-vs-uncached benchmark; `timed_decode_tokens` is the shared timing loop also used by the sweep |
+| `benchmark_kv_cache.py` | KV-cache sweep: times cached vs uncached decoding across context lengths (16→4096 tokens) on an untrained model clone, pairs timings with predicted FLOP ratios, writes `results/kv_cache_sweep.json` + plot |
 | `evaluate.py` | Corpus BLEU-4 (sacrebleu) over the validation split — greedy-decodes the checkpoint on every val pair and writes `results/metrics.json` |
 | `sampling.py` | Top-k and nucleus (top-p) sampling strategies with temperature |
 | `lora.py` | LoRA low-rank adapter layers (`LoRA_Layer`, `LinearWithLoRA`) |
 | `tokenizer.py` | From-scratch byte-level BPE built on the GPT-2 pre-tokenizer — merge training with incremental pair bookkeeping, `encode`/`decode`, checkpoint-serializable state (used by training and generation) |
-| `tests/` | 70 pytest tests: masking invariants, KV-cache equivalence, sampling, LoRA, BPE tokenizer, training helpers, BLEU evaluation |
-| `results/` | `history.json` (train/val curves) and `loss_curve.png` produced by `training.py` |
+| `tests/` | 75 pytest tests: masking invariants, KV-cache equivalence, benchmark FLOP accounting, sampling, LoRA, BPE tokenizer, training helpers, BLEU evaluation |
+| `results/` | `history.json` + `loss_curve.png` from `training.py`; `kv_cache_sweep.json` + `kv_cache_sweep.png` from `benchmark_kv_cache.py` |
 | `checkpoints/` | `best.pt` — best-validation checkpoint (model weights + config + tokenizer state) |
 
 ## Mechanisms implemented
@@ -53,7 +54,7 @@ The model is an encoder–decoder Transformer trained on an English to Portugues
 pip install -r requirements.txt
 python training.py        # train + save checkpoints/best.pt and results/
 python evaluate.py        # greedy-decode the val split, score corpus BLEU-4
-python -m pytest tests/ -q   # 70 tests
+python -m pytest tests/ -q   # 75 tests
 python tokenizer.py       # standalone BPE demo (4-sentence corpus)
 ```
 
@@ -65,7 +66,8 @@ Generation (loads the committed checkpoint, no training needed):
 python generate.py --source "Good morning"                        # greedy
 python generate.py --source "hello" --strategy topk --top-k 20 --temperature 0.8
 python generate.py --source "hello" --strategy topp --top-p 0.9
-python generate.py --benchmark                                     # KV-cache speed test
+python generate.py --benchmark                                     # KV-cache speed test (checkpoint, 31-token window)
+python benchmark_kv_cache.py                                       # KV-cache sweep across context lengths 16→4096 + plot
 python evaluate.py --limit 50                                      # quick BLEU sanity check
 ```
 
@@ -100,15 +102,25 @@ BLEU 5.68 is low in absolute terms — expected for a 10.6M-parameter model trai
 
 ![Training and validation loss](results/loss_curve.png)
 
-**KV-cache benchmark** (CUDA GPU, 31 tokens, best of 3):
+**KV-cache benchmark** (`python benchmark_kv_cache.py`, RTX 4050 laptop, CUDA, best of 3/2/1):
 
-| Decode mode | Throughput |
-|---|---|
-| Uncached (full re-forward per token) | 268.3 tokens/s |
-| Cached (incremental) | 275.0 tokens/s |
-| **Speedup** | **1.03×** |
+The trained checkpoint can only decode 31 tokens (its positional encoding is 32), far too short for the cache to matter. Since weights do not affect decode timing, the sweep uses an untrained clone of the same model (d_model=256, 4 layers, vocab 4,260) with a long positional encoding, and times cached vs uncached greedy decoding for n = 16…4096 tokens. Each timing is paired with the predicted FLOP ratio (linear layers + attention matmuls):
 
-The gap is tiny because the model is small (10.6M params) and the 32-token window bounds the work per step — at this size most of the per-step cost is Python/host overhead, which caching does not remove. The benefit grows with sequence length, since cached decoding costs O(n) attention per token instead of O(n²) recomputation.
+| n tokens | Uncached | Cached | Speedup | Predicted FLOP ratio |
+|---|---|---|---|---|
+| 16 | 294.3 tok/s | 271.9 tok/s | 0.92× | 6.6× |
+| 32 | 276.1 tok/s | 278.3 tok/s | 1.01× | 12.6× |
+| 64 | 281.5 tok/s | 281.1 tok/s | 1.00× | 24.7× |
+| 128 | 277.5 tok/s | 281.4 tok/s | 1.01× | 49.3× |
+| 256 | 291.6 tok/s | 270.8 tok/s | 0.93× | 100.1× |
+| 512 | 292.8 tok/s | 272.9 tok/s | 0.93× | 207.4× |
+| 1024 | 265.4 tok/s | 252.8 tok/s | 0.95× | 440.8× |
+| 2048 | 114.5 tok/s | 266.1 tok/s | 2.32× | 961.3× |
+| 4096 | 26.3 tok/s | 214.0 tok/s | **8.15×** | 2123.3× |
+
+![KV-cache sweep](results/kv_cache_sweep.png)
+
+The uncached path's wasted work grows as O(n²) per step and finally breaks through the overhead floor around n≈1500 — uncached throughput collapses 292 → 26 tok/s while cached stays nearly flat (281 → 214 tok/s), reaching 8.15× at n=4096. The measured speedup still trails the 2123× FLOP ratio because the cached path *itself* never leaves the overhead-bound regime. KV cache is a long-context effect, and whether it pays on a given machine is a race between the uncached path's growing FLOPs and the fixed per-step overhead they must overcome. 
 
 **Generation samples** — common in-corpus phrases translate correctly, including exact matches. Greedy decoding is deterministic; top-k/top-p sample from the predicted distribution, so outputs vary between runs:
 
@@ -125,7 +137,7 @@ Two honest limitations of a 19k-pair toy model: inputs outside the training dist
 
 ## Roadmap
 
-- [x] Unit tests (masking invariants, KV-cache equivalence, shape checks) — 70 tests
+- [x] Unit tests (masking invariants, KV-cache equivalence, shape checks, benchmark FLOP accounting) — 75 tests
 - [x] Generation loop tying together KV cache + top-k/top-p sampling
 - [x] Evaluation (perplexity within a run, corpus BLEU across tokenizers), checkpoints and loss-curve plots
 - [x] Finish the BPE tokenizer study (`tokenizer.py`) — byte-level BPE used in training and generation

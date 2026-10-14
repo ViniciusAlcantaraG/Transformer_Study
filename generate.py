@@ -88,23 +88,29 @@ def generate(model: Transformer, tokenizer: BPETokenizer, source_text: str,
 
 
 @torch.no_grad()
-def _timed_decode(model: Transformer, tokenizer: BPETokenizer,
-                  source_text: str, device: torch.device, use_cache: bool,
-                  n_tokens: int) -> float:
-    """Generate a fixed number of tokens (ignoring EOS) and return seconds."""
-    max_len = model.decoder.max_position_encod
-    src = torch.tensor([tokenizer.encode(source_text, max_len)],
-                       dtype=torch.long, device=device)
+def timed_decode_tokens(model: Transformer, src_ids: Tensor, n_new: int,
+                        device: torch.device, use_cache: bool,
+                        bos_id: int = 2) -> float:
+    """Time a fixed-length greedy decode (ignoring EOS) and return seconds.
+
+    Shared by the checkpoint benchmark and benchmark_kv_cache.py so both
+    measure the exact same decode loop. Causal masks for the uncached path
+    are allocated once before timing and sliced per step, so we measure
+    recomputing the decoder, not building masks.
+    """
+    src = src_ids.to(device)
     encoder_mask, _, cross_mask = make_masks(src, torch.zeros_like(src))
 
     model.clear_cache()
     encoder_output = model.encoder(src, mask=encoder_mask)
-    ys = torch.tensor([[tokenizer.bos_id]], dtype=torch.long, device=device)
+    ys = torch.tensor([[bos_id]], dtype=torch.long, device=device)
+    # one max-size mask; [:k, :k] is a zero-copy view of its top-left corner
+    look = causal_mask(n_new).unsqueeze(0).unsqueeze(0).to(device)
 
     if device.type == "cuda":
         torch.cuda.synchronize()
     start = time.perf_counter()
-    for _ in range(n_tokens):
+    for _ in range(n_new):
         if use_cache:
             out, _ = model.decoder(
                 ys[:, -1:], encoder_output,
@@ -112,10 +118,11 @@ def _timed_decode(model: Transformer, tokenizer: BPETokenizer,
                 use_cache=True, start_pos=ys.shape[1] - 1,
             )
         else:
-            look = causal_mask(ys.shape[1]).unsqueeze(0).unsqueeze(0).to(ys.device)
+            k = ys.shape[1]
             out, _ = model.decoder(
                 ys, encoder_output,
-                look_ahead_mask=look, padding_mask=cross_mask, use_cache=False,
+                look_ahead_mask=look[:, :, :k, :k], padding_mask=cross_mask,
+                use_cache=False,
             )
         logits = model.linear(out[:, -1])
         next_id = torch.argmax(logits, dim=-1, keepdim=True)
@@ -125,6 +132,18 @@ def _timed_decode(model: Transformer, tokenizer: BPETokenizer,
     elapsed = time.perf_counter() - start
     model.clear_cache()
     return elapsed
+
+
+@torch.no_grad()
+def _timed_decode(model: Transformer, tokenizer: BPETokenizer,
+                  source_text: str, device: torch.device, use_cache: bool,
+                  n_tokens: int) -> float:
+    """Generate a fixed number of tokens (ignoring EOS) and return seconds."""
+    max_len = model.decoder.max_position_encod
+    src = torch.tensor([tokenizer.encode(source_text, max_len)],
+                       dtype=torch.long, device=device)
+    return timed_decode_tokens(model, src, n_tokens, device, use_cache,
+                               bos_id=tokenizer.bos_id)
 
 
 def benchmark(model: Transformer, tokenizer: BPETokenizer, source_text: str,
